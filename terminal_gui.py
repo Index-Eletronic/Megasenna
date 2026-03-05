@@ -2,6 +2,7 @@
 import tkinter as tk
 from tkinter import scrolledtext, messagebox, simpledialog
 import json
+import re
 
 from megasena.api import (
     fetch_latest_megasena,
@@ -23,20 +24,59 @@ from megasena.stats import gerar_jogos_sugeridos, prob_acertar_sena
 
 
 def parse_nums(tokens):
+    """
+    Cadeado Mega-Sena:
+      - aceita 6 dezenas
+      - cada uma deve estar entre 1 e 60
+      - não permite repetição
+      - aceita: add 1 2 3 4 5 6  |  add 1,2,3,4,5,6
+    """
     if not tokens:
         raise ValueError("Informe 6 dezenas. Ex: add 5 12 23 34 45 60")
+
     if len(tokens) == 1 and "," in tokens[0]:
         tokens = tokens[0].split(",")
-    nums = [int(t) for t in tokens]
+
+    # converte e valida quantidade
+    try:
+        nums = [int(t) for t in tokens]
+    except ValueError:
+        raise ValueError("Use apenas números. Ex: add 5 12 23 34 45 60")
+
+    if len(nums) != 6:
+        raise ValueError(f"Você informou {len(nums)} dezena(s). A Mega-Sena exige exatamente 6.")
+
+    # valida faixa 1..60
+    fora = [n for n in nums if n < 1 or n > 60]
+    if fora:
+        raise ValueError(f"Dezenas inválidas (fora de 1..60): {sorted(set(fora))}")
+
+    # valida repetição
+    if len(set(nums)) != 6:
+        repetidas = sorted([n for n in set(nums) if nums.count(n) > 1])
+        raise ValueError(f"Dezenas repetidas não são permitidas: {repetidas}")
+
+    # mantém o normalize_jogo como validação final/padrão do projeto
     return normalize_jogo(nums)
+
+
+def parse_id(text: str) -> int:
+    """
+    Aceita: '9', 'ID9', 'id=9', '#9', 'ID: 9'...
+    Retorna o número inteiro.
+    """
+    m = re.search(r"\d+", text)
+    if not m:
+        raise ValueError("ID inválido. Use: del 9 (ou del ID9)")
+    return int(m.group())
 
 
 class TerminalApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("MegaSena Terminal")
-        self.root.geometry("980x580")
-
+        self.root.geometry("950x580")
+        self.root.resizable(False, False)
         init_db()
 
         self.out = scrolledtext.ScrolledText(root, wrap=tk.WORD, height=24, font=("Consolas", 11))
@@ -67,7 +107,7 @@ class TerminalApp:
         self.cmd.bind("<Down>", self.on_down)
 
         self.println("🎟️ MegaSena Terminal iniciado.")
-        self.println("✅ Versão: TERMINAL_GUI_SAVE_SUGGESTED_V1")
+        self.println("✅ Versão: TERMINAL_GUI_SAVE_SUGGESTED_PARSE_ID_V2_RANGELOCK_1_60")
         self.print_help()
 
     def println(self, text=""):
@@ -89,9 +129,9 @@ class TerminalApp:
         self.println()
         self.println("Comandos disponíveis:")
         self.println("  help                          -> mostra ajuda")
-        self.println("  add N1 N2 N3 N4 N5 N6          -> salva um jogo")
+        self.println("  add N1 N2 N3 N4 N5 N6          -> salva um jogo (DEZENAS 1..60)")
         self.println("  list                          -> lista jogos salvos")
-        self.println("  del ID                        -> exclui um jogo pelo id")
+        self.println("  del ID                         -> exclui um jogo (aceita: 9, ID9, id=9, #9)")
         self.println("  delall                        -> exclui TODOS os jogos do banco (com confirmação)")
         self.println("  latest                        -> mostra último resultado (e salva em cache)")
         self.println("  compare                       -> compara TODOS jogos com o último resultado (usa cache se offline)")
@@ -102,7 +142,7 @@ class TerminalApp:
         self.println("  prob                          -> mostra prob. de acertar sena (6/60)")
         self.println("  clear / cls                   -> limpa a tela e mostra os comandos")
         self.println("  debuglatest                   -> 🔎 mostra payload bruto e chaves da API")
-        self.println("=~ "*38)
+        self.println("=~ " * 38)
         self.println()
 
     def on_up(self, event=None):
@@ -197,7 +237,7 @@ class TerminalApp:
         if cmd in ("del", "delete", "rm", "remove"):
             if not args:
                 raise ValueError("Use: del ID  (ex: del 7)")
-            jid = int(args[0])
+            jid = parse_id(args[0])
             ok = excluir_jogo(jid)
             self.println(f"🗑️ Jogo id={jid} excluído." if ok else f"⚠️ Não encontrei jogo com id={jid}.")
             return
@@ -213,7 +253,7 @@ class TerminalApp:
         if cmd == "latest":
             numero, data, dezenas, fonte, from_cache = self._fetch_latest_or_cache()
             tag = "📦 cache" if from_cache else "🌐 online"
-            self.println(f"📣 Último concurso: {numero} | Data: {data} | Dezenas: {dezenas}  ({tag}, fonte: {fonte})")
+            self.println(f"📣 Último concurso: {numero} |-> Dezenas: {dezenas}  ({tag}, fonte: {fonte})")
             return
 
         if cmd == "compare":
@@ -227,8 +267,8 @@ class TerminalApp:
 
             for j in reversed(jogos):
                 r = comparar_jogo(j["dezenas"], resultado)
-                self.println(f"\nJogo id={j['id']}) |->  {j['dezenas']}")
-                self.println(f"🎯 Acertos: {r['acertos_qtd']} -> {r['acertos']}")
+                self.println(f"\nJogo id={j['id']} | {j['dezenas']}")
+                self.println(f"🎯 Acertos: {r['acertos_qtd']} |-> {r['acertos']}")
             self.println()
             return
 
@@ -251,7 +291,6 @@ class TerminalApp:
                 return
 
             if not args:
-                # salva todas
                 indices = list(range(1, len(self.last_suggestions) + 1))
                 self._save_suggestions_by_indices(indices)
                 return
@@ -270,7 +309,6 @@ class TerminalApp:
                 self._save_suggestions_by_indices(indices)
                 return
 
-            # salva índices informados: save_suggested 1 3 5
             indices = [int(x) for x in args]
             self._save_suggestions_by_indices(indices)
             return
