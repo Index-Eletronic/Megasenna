@@ -1,6 +1,6 @@
 # terminal_gui.py
 import tkinter as tk
-from tkinter import scrolledtext, messagebox
+from tkinter import scrolledtext, messagebox, simpledialog
 import json
 
 from megasena.api import (
@@ -23,17 +23,10 @@ from megasena.stats import gerar_jogos_sugeridos, prob_acertar_sena
 
 
 def parse_nums(tokens):
-    """
-    Aceita:
-      add 1 2 3 4 5 6
-      add 1,2,3,4,5,6
-    """
     if not tokens:
         raise ValueError("Informe 6 dezenas. Ex: add 5 12 23 34 45 60")
-
     if len(tokens) == 1 and "," in tokens[0]:
         tokens = tokens[0].split(",")
-
     nums = [int(t) for t in tokens]
     return normalize_jogo(nums)
 
@@ -42,7 +35,7 @@ class TerminalApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("MegaSena Terminal")
-        self.root.geometry("980x560")
+        self.root.geometry("980x580")
 
         init_db()
 
@@ -65,12 +58,16 @@ class TerminalApp:
 
         self.history = []
         self.hist_index = 0
+
+        # guarda as últimas sugestões geradas (sessão)
+        self.last_suggestions: list[list[int]] = []
+
         self.cmd.bind("<Return>", lambda e: self.on_run())
         self.cmd.bind("<Up>", self.on_up)
         self.cmd.bind("<Down>", self.on_down)
 
         self.println("🎟️ MegaSena Terminal iniciado.")
-        self.println("✅ Versão: TERMINAL_GUI_DEBUGLATEST_V1")
+        self.println("✅ Versão: TERMINAL_GUI_SAVE_SUGGESTED_V1")
         self.print_help()
 
     def println(self, text=""):
@@ -91,24 +88,21 @@ class TerminalApp:
     def print_help(self):
         self.println()
         self.println("Comandos disponíveis:")
-        self.println("  help                         -> mostra ajuda")
-        self.println("  add N1 N2 N3 N4 N5 N6         -> salva um jogo")
-        self.println("  list                         -> lista jogos salvos")
-        self.println("  del ID                       -> exclui um jogo pelo id")
-        self.println("  delall                       -> exclui TODOS os jogos do banco (com confirmação)")
-        self.println("  latest                       -> mostra último resultado (e salva em cache)")
-        self.println("  compare                      -> compara TODOS jogos com o último resultado (usa cache se offline)")
-        self.println("  suggest [N]                  -> sugere N jogos (padrão 10)")
-        self.println("  prob                         -> mostra prob. de acertar sena (6/60)")
-        self.println("  clear / cls                  -> limpa a tela e mostra os comandos")
-        self.println("  debuglatest                  -> 🔎 arma secreta: mostra payload bruto e chaves da API")
-        self.println("Exemplos:")
-        self.println("  add 5 12 23 34 45 60")
-        self.println("  add 5,12,23,34,45,60")
-        self.println("  del 7")
-        self.println("  delall")
-        self.println("  suggest 15")
-        self.println("  debuglatest")
+        self.println("  help                          -> mostra ajuda")
+        self.println("  add N1 N2 N3 N4 N5 N6          -> salva um jogo")
+        self.println("  list                          -> lista jogos salvos")
+        self.println("  del ID                        -> exclui um jogo pelo id")
+        self.println("  delall                        -> exclui TODOS os jogos do banco (com confirmação)")
+        self.println("  latest                        -> mostra último resultado (e salva em cache)")
+        self.println("  compare                       -> compara TODOS jogos com o último resultado (usa cache se offline)")
+        self.println("  suggest [N]                   -> gera N sugestões (padrão 10)")
+        self.println("  save_suggested                -> salva TODAS as sugestões geradas por 'suggest'")
+        self.println("  save_suggested 1 3 5          -> salva só as sugestões pelos índices informados")
+        self.println("  save_suggested ask            -> pergunta quantas salvar (no popup)")
+        self.println("  prob                          -> mostra prob. de acertar sena (6/60)")
+        self.println("  clear / cls                   -> limpa a tela e mostra os comandos")
+        self.println("  debuglatest                   -> 🔎 mostra payload bruto e chaves da API")
+        self.println("=~ "*38)
         self.println()
 
     def on_up(self, event=None):
@@ -130,28 +124,21 @@ class TerminalApp:
         line = self.cmd.get().strip()
         if not line:
             return
-
         self.history.append(line)
         self.hist_index = len(self.history)
-
         self.println(f"> {line}")
         self.cmd.delete(0, tk.END)
-
         try:
             self.dispatch(line)
         except Exception as e:
             self.println(f"❌ Erro: {e}")
 
     def _fetch_latest_or_cache(self):
-        """
-        Retorna (numero, data, dezenas, fonte, from_cache_bool)
-        """
         try:
             payload, fonte = fetch_latest_megasena()
             dezenas = dezenas_do_resultado(payload)
             numero = concurso_numero(payload)
             data = concurso_data(payload)
-            # salva cache se tiver numero
             salvar_concurso(numero, data, dezenas)
             return numero, data, dezenas, fonte, False
         except Exception as e:
@@ -159,6 +146,25 @@ class TerminalApp:
             if cached:
                 return cached["numero"], cached["data_apuracao"], cached["dezenas"], f"cache (erro API: {e})", True
             raise
+
+    def _save_suggestions_by_indices(self, indices: list[int]):
+        if not self.last_suggestions:
+            self.println("⚠️ Nenhuma sugestão na memória. Rode: suggest 10")
+            return
+
+        saved_ids = []
+        for idx in indices:
+            if idx < 1 or idx > len(self.last_suggestions):
+                self.println(f"⚠️ Índice inválido: {idx} (válido 1..{len(self.last_suggestions)})")
+                continue
+            jogo = self.last_suggestions[idx - 1]
+            jid = salvar_jogo(jogo)
+            saved_ids.append(jid)
+
+        if saved_ids:
+            self.println(f"✅ Sugestões salvas! IDs criados: {saved_ids}")
+        else:
+            self.println("⚠️ Nada foi salvo.")
 
     def dispatch(self, line: str):
         parts = line.split()
@@ -184,8 +190,8 @@ class TerminalApp:
             if not jogos:
                 self.println("Sem jogos salvos.")
                 return
-            for j in reversed(jogos):  # do mais antigo para o mais novo
-                self.println(f"id={j['id']} | {j['criado_em']} | {j['dezenas']}")
+            for j in reversed(jogos):
+                self.println(f"id={j['id']} |-> {j['dezenas']}")
             return
 
         if cmd in ("del", "delete", "rm", "remove"):
@@ -193,10 +199,7 @@ class TerminalApp:
                 raise ValueError("Use: del ID  (ex: del 7)")
             jid = int(args[0])
             ok = excluir_jogo(jid)
-            if ok:
-                self.println(f"🗑️ Jogo id={jid} excluído.")
-            else:
-                self.println(f"⚠️ Não encontrei jogo com id={jid}.")
+            self.println(f"🗑️ Jogo id={jid} excluído." if ok else f"⚠️ Não encontrei jogo com id={jid}.")
             return
 
         if cmd in ("delall", "deleteall", "rmall", "clearall"):
@@ -218,14 +221,13 @@ class TerminalApp:
             if not jogos:
                 self.println("Você ainda não tem jogos salvos. Use: add ...")
                 return
-
             numero, data, resultado, fonte, from_cache = self._fetch_latest_or_cache()
             tag = "📦 cache" if from_cache else "🌐 online"
             self.println(f"📣 Concurso {numero} ({data}) | {resultado}  ({tag}, fonte: {fonte})")
 
             for j in reversed(jogos):
                 r = comparar_jogo(j["dezenas"], resultado)
-                self.println(f"\nJogo id={j['id']} ({j['criado_em']}): {j['dezenas']}")
+                self.println(f"\nJogo id={j['id']}) |->  {j['dezenas']}")
                 self.println(f"🎯 Acertos: {r['acertos_qtd']} -> {r['acertos']}")
             self.println()
             return
@@ -236,33 +238,55 @@ class TerminalApp:
                 n = int(args[0])
                 if n < 1 or n > 200:
                     raise ValueError("N precisa estar entre 1 e 200.")
-
             self.println(f"📌 Prob. de acertar a sena (6/60): ~ {prob_acertar_sena():.10f} (≈ 1 em 50 milhões)")
-            sugestoes = gerar_jogos_sugeridos(n_sugestoes=n, amostras=20000)
-            self.println("🧠 Sugestões:")
-            for i, s in enumerate(sugestoes, 1):
+            self.last_suggestions = gerar_jogos_sugeridos(n_sugestoes=n, amostras=20000)
+            self.println("🧠 Sugestões (use 'save_suggested' para salvar):")
+            for i, s in enumerate(self.last_suggestions, 1):
                 self.println(f"{i:02d}) {s}")
+            return
+
+        if cmd == "save_suggested":
+            if not self.last_suggestions:
+                self.println("⚠️ Nenhuma sugestão na memória. Rode: suggest 10")
+                return
+
+            if not args:
+                # salva todas
+                indices = list(range(1, len(self.last_suggestions) + 1))
+                self._save_suggestions_by_indices(indices)
+                return
+
+            if args[0].lower() == "ask":
+                q = simpledialog.askinteger(
+                    "Salvar sugestões",
+                    f"Quantas sugestões salvar? (1..{len(self.last_suggestions)})",
+                    minvalue=1,
+                    maxvalue=len(self.last_suggestions),
+                )
+                if q is None:
+                    self.println("Cancelado.")
+                    return
+                indices = list(range(1, q + 1))
+                self._save_suggestions_by_indices(indices)
+                return
+
+            # salva índices informados: save_suggested 1 3 5
+            indices = [int(x) for x in args]
+            self._save_suggestions_by_indices(indices)
             return
 
         if cmd == "prob":
             self.println(f"📌 Prob. de acertar a sena (6/60): ~ {prob_acertar_sena():.10f} (≈ 1 em 50 milhões)")
             return
 
-        # 🔎 ARMA SECRETA
         if cmd == "debuglatest":
             self.println("🔎 Debug do último resultado (arma secreta ativada)")
-
             try:
                 payload, fonte = fetch_latest_megasena()
                 self.println(f"Fonte: {fonte}")
-
-                # chaves
                 if isinstance(payload, dict):
                     self.println(f"Chaves do payload: {list(payload.keys())}")
-                else:
-                    self.println(f"Tipo do payload: {type(payload)}")
 
-                # preview do JSON
                 try:
                     preview = json.dumps(payload, ensure_ascii=False, indent=2)
                 except Exception:
@@ -273,7 +297,6 @@ class TerminalApp:
                 self.println("Payload (preview):")
                 self.println(preview)
 
-                # tenta extrair dezenas
                 try:
                     dezenas = dezenas_do_resultado(payload)
                     numero = concurso_numero(payload)
