@@ -3,6 +3,8 @@ import tkinter as tk
 from tkinter import scrolledtext, messagebox, simpledialog
 import json
 import re
+from queue import Empty, Queue
+from threading import Thread
 
 from megasena.api import (
     fetch_latest_megasena,
@@ -34,8 +36,7 @@ def parse_nums(tokens):
     if not tokens:
         raise ValueError("Informe 6 dezenas. Ex: add 5 12 23 34 45 60")
 
-    if len(tokens) == 1 and "," in tokens[0]:
-        tokens = tokens[0].split(",")
+    tokens = " ".join(tokens).replace(",", " ").split()
 
     # converte e valida quantidade
     try:
@@ -65,10 +66,10 @@ def parse_id(text: str) -> int:
     Aceita: '9', 'ID9', 'id=9', '#9', 'ID: 9'...
     Retorna o número inteiro.
     """
-    m = re.search(r"\d+", text)
+    m = re.fullmatch(r"(?:id\s*[:=]?\s*|#\s*)?([1-9]\d*)", text.strip(), re.IGNORECASE)
     if not m:
         raise ValueError("ID inválido. Use: del 9 (ou del ID9)")
-    return int(m.group())
+    return int(m.group(1))
 
 
 class TerminalApp:
@@ -101,13 +102,18 @@ class TerminalApp:
 
         # guarda as últimas sugestões geradas (sessão)
         self.last_suggestions: list[list[int]] = []
+        self._background_results = Queue()
+        self._busy = False
+        self._closed = False
+        self._poll_id = self.root.after(100, self._drain_background_results)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.cmd.bind("<Return>", lambda e: self.on_run())
         self.cmd.bind("<Up>", self.on_up)
         self.cmd.bind("<Down>", self.on_down)
 
         self.println("🎟️ MegaSena Terminal iniciado.")
-        self.println("✅ Versão: TERMINAL_GUI_SAVE_SUGGESTED_PARSE_ID_V2_RANGELOCK_1_60")
+        self.println("✅ Banco local; consultas online em segundo plano.")
         self.print_help()
 
     def println(self, text=""):
@@ -125,6 +131,100 @@ class TerminalApp:
         self.clear_output()
         self.print_help()
 
+    def _on_close(self):
+        self._closed = True
+        self.root.after_cancel(self._poll_id)
+        self.root.destroy()
+
+    def _run_background(self, work, on_success, status):
+        """O worker só calcula; a fila entrega a resposta na thread do Tk."""
+        if self._busy:
+            self.println("⏳ Aguarde a consulta ou geração em andamento.")
+            return
+        self._busy = True
+        self.println(status)
+
+        def worker():
+            try:
+                result = work()
+            except Exception as exc:
+                self._background_results.put((on_success, None, exc))
+            else:
+                self._background_results.put((on_success, result, None))
+
+        Thread(target=worker, daemon=True, name="megasena-terminal").start()
+
+    def _drain_background_results(self):
+        if self._closed:
+            return
+        try:
+            on_success, result, error = self._background_results.get_nowait()
+        except Empty:
+            pass
+        else:
+            self._busy = False
+            if error is not None:
+                self.println(f"❌ Não foi possível concluir: {error}")
+            else:
+                try:
+                    on_success(result)
+                except Exception as exc:
+                    self.println(f"❌ Não foi possível apresentar o resultado: {exc}")
+        self._poll_id = self.root.after(100, self._drain_background_results)
+
+    def _show_latest(self, result):
+        numero, data, dezenas, fonte, from_cache = result
+        tag = "📦 cache local, pode estar desatualizado" if from_cache else "🌐 online"
+        self.println(f"📣 Concurso: {numero} ({data}) | Dezenas: {dezenas} ({tag}, fonte: {fonte})")
+
+    def _show_comparisons(self, result):
+        concurso, comparacoes = result
+        self._show_latest(concurso)
+        for jogo, comparacao in comparacoes:
+            self.println(f"\nJogo id={jogo['id']} | {jogo['dezenas']}")
+            self.println(f"🎯 Acertos: {comparacao['acertos_qtd']} |-> {comparacao['acertos']}")
+        self.println()
+
+    def _show_suggestions(self, suggestions):
+        self.last_suggestions = suggestions
+        self.println("🧠 Jogos distintos e diversificados (use 'save_suggested' para salvar):")
+        for i, suggestion in enumerate(suggestions, 1):
+            self.println(f"{i:02d}) {suggestion}")
+
+    def _show_lines(self, lines):
+        for line in lines:
+            self.println(line)
+
+    def _debug_latest(self):
+        lines = []
+        try:
+            payload, fonte = fetch_latest_megasena()
+            lines.append(f"Fonte: {fonte}")
+            if isinstance(payload, dict):
+                lines.append(f"Chaves do payload: {list(payload.keys())}")
+            preview = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+            if len(preview) > 900:
+                preview = preview[:900] + "\n... (cortado)"
+            lines.extend(["Payload (preview):", preview])
+            try:
+                dezenas = dezenas_do_resultado(payload)
+                numero = concurso_numero(payload)
+                data = concurso_data(payload)
+                lines.append(f"✅ Extração OK -> Concurso: {numero} | Data: {data} | Dezenas: {dezenas}")
+            except Exception as exc:
+                lines.append(f"❌ Falha ao extrair dezenas: {exc}")
+        except Exception as exc:
+            lines.append(f"❌ Falha ao buscar online: {exc}")
+            cached = ler_ultimo_concurso_salvo()
+            if cached:
+                lines.extend([
+                    "📦 Cache encontrado no banco:",
+                    f"Concurso: {cached['numero']} | Data: {cached['data_apuracao']} | Dezenas: {cached['dezenas']}",
+                ])
+            else:
+                lines.append("📦 Sem cache salvo.")
+        return lines
+
     def print_help(self):
         self.println()
         self.println("Comandos disponíveis:")
@@ -135,7 +235,7 @@ class TerminalApp:
         self.println("  delall                        -> exclui TODOS os jogos do banco (com confirmação)")
         self.println("  latest                        -> mostra último resultado (e salva em cache)")
         self.println("  compare                       -> compara TODOS jogos com o último resultado (usa cache se offline)")
-        self.println("  suggest [N]                   -> gera N sugestões (padrão 10)")
+        self.println("  suggest [N]                   -> gera N jogos distintos e diversificados (1..200, padrão 10)")
         self.println("  save_suggested                -> salva TODAS as sugestões geradas por 'suggest'")
         self.println("  save_suggested 1 3 5          -> salva só as sugestões pelos índices informados")
         self.println("  save_suggested ask            -> pergunta quantas salvar (no popup)")
@@ -208,6 +308,8 @@ class TerminalApp:
 
     def dispatch(self, line: str):
         parts = line.split()
+        if not parts:
+            return
         cmd = parts[0].lower()
         args = parts[1:]
 
@@ -237,7 +339,7 @@ class TerminalApp:
         if cmd in ("del", "delete", "rm", "remove"):
             if not args:
                 raise ValueError("Use: del ID  (ex: del 7)")
-            jid = parse_id(args[0])
+            jid = parse_id(" ".join(args))
             ok = excluir_jogo(jid)
             self.println(f"🗑️ Jogo id={jid} excluído." if ok else f"⚠️ Não encontrei jogo com id={jid}.")
             return
@@ -251,9 +353,7 @@ class TerminalApp:
             return
 
         if cmd == "latest":
-            numero, data, dezenas, fonte, from_cache = self._fetch_latest_or_cache()
-            tag = "📦 cache" if from_cache else "🌐 online"
-            self.println(f"📣 Último concurso: {numero} |-> Dezenas: {dezenas}  ({tag}, fonte: {fonte})")
+            self._run_background(self._fetch_latest_or_cache, self._show_latest, "⏳ Consultando último resultado…")
             return
 
         if cmd == "compare":
@@ -261,31 +361,42 @@ class TerminalApp:
             if not jogos:
                 self.println("Você ainda não tem jogos salvos. Use: add ...")
                 return
-            numero, data, resultado, fonte, from_cache = self._fetch_latest_or_cache()
-            tag = "📦 cache" if from_cache else "🌐 online"
-            self.println(f"📣 Concurso {numero} ({data}) | {resultado}  ({tag}, fonte: {fonte})")
 
-            for j in reversed(jogos):
-                r = comparar_jogo(j["dezenas"], resultado)
-                self.println(f"\nJogo id={j['id']} | {j['dezenas']}")
-                self.println(f"🎯 Acertos: {r['acertos_qtd']} |-> {r['acertos']}")
-            self.println()
+            def compare():
+                concurso = self._fetch_latest_or_cache()
+                return concurso, [(j, comparar_jogo(j["dezenas"], concurso[2])) for j in reversed(jogos)]
+
+            self._run_background(compare, self._show_comparisons, "⏳ Consultando resultado para comparar jogos…")
             return
 
         if cmd == "suggest":
             n = 10
             if args:
-                n = int(args[0])
+                try:
+                    if len(args) != 1:
+                        raise ValueError
+                    n = int(args[0])
+                except ValueError:
+                    raise ValueError("Use: suggest N, com N inteiro de 1 a 200.") from None
                 if n < 1 or n > 200:
                     raise ValueError("N precisa estar entre 1 e 200.")
-            self.println(f"📌 Prob. de acertar a sena (6/60): ~ {prob_acertar_sena():.10f} (≈ 1 em 50 milhões)")
-            self.last_suggestions = gerar_jogos_sugeridos(n_sugestoes=n, amostras=20000)
-            self.println("🧠 Sugestões (use 'save_suggested' para salvar):")
-            for i, s in enumerate(self.last_suggestions, 1):
-                self.println(f"{i:02d}) {s}")
+            self.println(f"📌 Prob. de acertar a sena por jogo (6/60): {prob_acertar_sena():.10f} (1 em 50.063.860)")
+            self.println("Cada combinação tem a mesma chance em um sorteio justo. O histórico não prevê o próximo resultado.")
+
+            def suggest():
+                return gerar_jogos_sugeridos(
+                    n_sugestoes=n,
+                    estrategia="diversificada",
+                    excluir=[j["dezenas"] for j in listar_jogos()],
+                )
+
+            self._run_background(suggest, self._show_suggestions, "⏳ Gerando jogos distintos dos já salvos…")
             return
 
         if cmd == "save_suggested":
+            if self._busy:
+                self.println("⏳ Aguarde a consulta ou geração em andamento antes de salvar sugestões.")
+                return
             if not self.last_suggestions:
                 self.println("⚠️ Nenhuma sugestão na memória. Rode: suggest 10")
                 return
@@ -309,50 +420,20 @@ class TerminalApp:
                 self._save_suggestions_by_indices(indices)
                 return
 
-            indices = [int(x) for x in args]
+            try:
+                indices = [int(x) for x in args]
+            except ValueError:
+                raise ValueError("Informe índices inteiros. Exemplo: save_suggested 1 3 5") from None
             self._save_suggestions_by_indices(indices)
             return
 
         if cmd == "prob":
-            self.println(f"📌 Prob. de acertar a sena (6/60): ~ {prob_acertar_sena():.10f} (≈ 1 em 50 milhões)")
+            self.println(f"📌 Prob. de acertar a sena por jogo (6/60): {prob_acertar_sena():.10f} (1 em 50.063.860)")
+            self.println("Cada combinação tem a mesma chance em um sorteio justo; repetir um jogo não aumenta a cobertura.")
             return
 
         if cmd == "debuglatest":
-            self.println("🔎 Debug do último resultado (arma secreta ativada)")
-            try:
-                payload, fonte = fetch_latest_megasena()
-                self.println(f"Fonte: {fonte}")
-                if isinstance(payload, dict):
-                    self.println(f"Chaves do payload: {list(payload.keys())}")
-
-                try:
-                    preview = json.dumps(payload, ensure_ascii=False, indent=2)
-                except Exception:
-                    preview = str(payload)
-
-                if len(preview) > 900:
-                    preview = preview[:900] + "\n... (cortado)"
-                self.println("Payload (preview):")
-                self.println(preview)
-
-                try:
-                    dezenas = dezenas_do_resultado(payload)
-                    numero = concurso_numero(payload)
-                    data = concurso_data(payload)
-                    self.println(f"✅ Extração OK -> Concurso: {numero} | Data: {data} | Dezenas: {dezenas}")
-                except Exception as e:
-                    self.println(f"❌ Falha ao extrair dezenas: {e}")
-
-            except Exception as e:
-                self.println(f"❌ Falha ao buscar online: {e}")
-                cached = ler_ultimo_concurso_salvo()
-                if cached:
-                    self.println("📦 Cache encontrado no banco:")
-                    self.println(
-                        f"Concurso: {cached['numero']} | Data: {cached['data_apuracao']} | Dezenas: {cached['dezenas']}"
-                    )
-                else:
-                    self.println("📦 Sem cache salvo.")
+            self._run_background(self._debug_latest, self._show_lines, "🔎 Consultando dados da API…")
             return
 
         raise ValueError("Comando desconhecido. Digite 'help' para ver os comandos.")

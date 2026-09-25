@@ -1,1 +1,2 @@
-requests>=2.31.0
+# O aplicativo usa apenas a biblioteca padrão do Python (incluindo Tkinter).
+# Para gerar o .exe: instale requirements-build.txt.
