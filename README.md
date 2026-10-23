@@ -95,3 +95,11 @@ Veja [ANALISE.md](ANALISE.md) para os problemas encontrados e os critérios usad
 Para preencher automaticamente, uma a uma, as 25 apostas da carteira preparada,
 consulte [AUTOMACAO_CARRINHO.md](AUTOMACAO_CARRINHO.md). A automação em Python abre
 o navegador visível, confere cada jogo no carrinho e para antes do pagamento.
+
+Para usar o navegador já aberto e clicar por coordenadas com PyAutoGUI, consulte
+[AUTOMACAO_PYAUTOGUI.md](AUTOMACAO_PYAUTOGUI.md). Esse modo calibra o volante na
+tela com cinco pontos iniciais e captura **Colocar no Carrinho** após marcar as
+seis dezenas, com o botão ativo. Confere visualmente as dezenas e espera o
+volante ficar vazio após o clique. Se houver jogo pendente, confira-o no carrinho
+antes de retomar. Esse modo não lê o painel de apostas nem confirma o registro
+da aposta no site.
