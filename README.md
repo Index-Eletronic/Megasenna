@@ -89,3 +89,9 @@ O banco com jogos pessoais não é embutido no programa. O PyInstaller empacota 
 Python e o Tkinter; não há servidor, conta online ou serviço de banco a instalar.
 
 Veja [ANALISE.md](ANALISE.md) para os problemas encontrados e os critérios usados.
+
+## Carrinho de 25 apostas no portal CAIXA
+
+Para preencher automaticamente, uma a uma, as 25 apostas da carteira preparada,
+consulte [AUTOMACAO_CARRINHO.md](AUTOMACAO_CARRINHO.md). A automação em Python abre
+o navegador visível, confere cada jogo no carrinho e para antes do pagamento.

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Volante CAIXA local para testes</title>
+  <style>
+    .escolhe-numero { display: flex; flex-wrap: wrap; gap: 4px; list-style: none; }
+    .escolhe-numero a { display: block; padding: 4px; }
+    .escolhe-numero a.selected { background: green; color: white; }
+  </style>
+</head>
+<body>
+  <div id="container-volante">
+  <h1>Preencha sua aposta</h1>
+  <ul class="escolhe-numero mega-sena" aria-label="Dezenas"></ul>
+  <button type="button" id="limparvolante">Limpar Volante</button>
+  <div class="numero-item"><label>Quantidade de números da aposta</label><span>6</span></div>
+  <div class="numero-item"><label>Teimosinhas</label><span>0</span></div>
+  <div>Valor da Aposta: <span>R$ 6,00</span></div>
+  <button type="button" id="colocarnocarrinho">Colocar no Carrinho</button>
+  </div>
+  <section id="carrinho" aria-label="Carrinho"></section>
+  <script>
+    window.resetCount = 0;
+    window.addCount = 0;
+    window.forceWrongSelection = false;
+    window.suppressCart = false;
+
+    const numberList = document.querySelector('ul.escolhe-numero.mega-sena');
+    for (let number = 1; number <= 60; number++) {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.id = `n${String(number).padStart(2, '0')}`;
+      link.href = '#';
+      link.textContent = String(number).padStart(2, '0');
+      link.addEventListener('click', event => {
+        event.preventDefault();
+        link.classList.toggle('selected');
+        if (window.forceWrongSelection) {
+          document.querySelector('#n60').classList.add('selected');
+        }
+      });
+      item.append(link);
+      numberList.append(item);
+    }
+
+    // Simula um volante que ficou parcialmente marcado antes de iniciar a automação.
+    document.querySelector('#n58').classList.add('selected');
+
+    document.querySelector('#limparvolante').addEventListener('click', () => {
+      window.resetCount += 1;
+      numberList.querySelectorAll('a.selected').forEach(link => {
+        link.classList.remove('selected');
+      });
+    });
+
+    document.querySelector('#colocarnocarrinho').addEventListener('click', () => {
+      window.addCount += 1;
+      if (window.suppressCart) return;
+      const selected = [...numberList.querySelectorAll('a.selected')];
+      if (selected.length !== 6) return;
+      const row = document.createElement('div');
+      row.className = 'volante mega-sena';
+      const numbers = document.createElement('div');
+      numbers.className = 'numero-volante-aposta-incluida';
+      selected.forEach(link => {
+        const span = document.createElement('span');
+        span.className = 'margemVolante';
+        span.textContent = link.textContent;
+        numbers.append(span);
+      });
+      row.append(numbers);
+      document.querySelector('#carrinho').append(row);
+      selected.forEach(link => link.classList.remove('selected'));
+    });
+  </script>
+</body>
+</html>
