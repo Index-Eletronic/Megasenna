@@ -76,6 +76,33 @@ py -3.13 desktop_gui.py
 A interface de comandos anterior continua em `terminal_gui.py`; a entrada de
 console em `main.py` também permanece disponível.
 
+### Comandos do terminal
+
+Execute `py -3.13 terminal_gui.py`. A ajuda e os comandos são em português:
+
+```text
+ajuda
+adicionar 5 12 23 34 45 60
+listar
+excluir ID
+excluir_todos
+ultimo
+comparar
+sugerir 10
+salvar_sugestoes
+salvar_sugestoes 1 3 5
+salvar_sugestoes perguntar
+probabilidade
+limpar
+diagnostico
+```
+
+`comparar` confere todos os jogos contra o último resultado disponível e os
+apresenta do maior número de acertos para o menor, incluindo jogos sem acertos.
+Em empates, o menor ID aparece primeiro. A opção 2 de `main.py` usa a mesma
+ordenação. `listar` continua mostrando os jogos salvos sem consultar resultados.
+Os comandos antigos em inglês continuam aceitos por compatibilidade.
+
 ## Testar e gerar o executável
 
 ```powershell

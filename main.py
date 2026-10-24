@@ -31,7 +31,7 @@ def parse_jogo(txt: str) -> list[int]:
 def _main():
     init_db()
 
-    print("🎟️  MegaSena Checker")
+    print("🎟️  Conferidor da Mega-Sena")
     print("1) Adicionar jogo")
     print("2) Comparar meus jogos com o último resultado")
     print("3) Sugerir jogos distintos e diversificados")
@@ -66,8 +66,8 @@ def _main():
             fonte = "cache local; resultado mais recente disponível, sem atualização online"
         print(f"📣 Concurso: {concurso} | Data: {data} | Dezenas: {resultado} | Fonte: {fonte}")
 
-        for j in reversed(jogos):  # do mais antigo para o mais novo
-            r = comparar_jogo(j["dezenas"], resultado)
+        comparacoes = [(j, comparar_jogo(j["dezenas"], resultado)) for j in jogos]
+        for j, r in sorted(comparacoes, key=lambda item: (-item[1]["acertos_qtd"], item[0]["id"])):
             print(f"\nJogo id={j['id']} ({j['criado_em']}): {j['dezenas']}")
             print(f"🎯 Acertos: {r['acertos_qtd']} -> {r['acertos']}")
 

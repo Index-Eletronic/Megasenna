@@ -38,6 +38,20 @@ class CliTests(unittest.TestCase):
         self.assertIn("cache local", output)
         self.assertIn("Acertos: 6", output)
 
+    def test_compare_orders_by_hits_then_id_using_cached_result(self):
+        jogos = [
+            {"id": 3, "criado_em": "2026-10-23", "dezenas": [1, 2, 3, 4, 5, 8]},
+            {"id": 2, "criado_em": "2026-10-23", "dezenas": [10, 20, 30, 40, 50, 60]},
+            {"id": 1, "criado_em": "2026-10-23", "dezenas": [1, 2, 3, 4, 5, 7]},
+        ]
+        cached = {"numero": 3209, "data_apuracao": "22/09/2026", "dezenas": [1, 2, 3, 4, 5, 6]}
+        with patch("main.fetch_latest_megasena", side_effect=main.MegaSenaAPIError("offline")), \
+                patch("main.listar_jogos", return_value=jogos), \
+                patch("main.ler_ultimo_concurso_salvo", return_value=cached):
+            output = self.run_cli(["2"])
+        self.assertLess(output.index("Jogo id=1"), output.index("Jogo id=3"))
+        self.assertLess(output.index("Jogo id=3"), output.index("Jogo id=2"))
+
     def test_suggestions_exclude_saved_games(self):
         jogos = [{"dezenas": [1, 2, 3, 4, 5, 6]}]
         with patch("main.listar_jogos", return_value=jogos), \
@@ -69,6 +83,61 @@ class TerminalTests(unittest.TestCase):
         app._busy = False
         app._closed = False
         return app
+
+    def test_portuguese_commands_keep_existing_command_behavior(self):
+        pairs = [
+            ("ajuda", "help"), ("adicionar 1 2 3 4 5 6", "add 1 2 3 4 5 6"),
+            ("listar", "list"), ("excluir 1", "del 1"), ("excluir_todos", "delall"),
+            ("ultimo", "latest"), ("comparar", "compare"), ("sugerir 1", "suggest 1"),
+            ("salvar_sugestoes", "save_suggested"),
+            ("salvar_sugestoes 1", "save_suggested 1"),
+            ("salvar_sugestoes perguntar", "save_suggested ask"),
+            ("probabilidade", "prob"), ("limpar", "clear"), ("diagnostico", "debuglatest"),
+        ]
+        for portuguese, legacy in pairs:
+            outputs = []
+            for command in (portuguese, legacy):
+                with self.subTest(command=command), \
+                        patch("terminal_gui.listar_jogos", return_value=[]), \
+                        patch("terminal_gui.salvar_jogo", return_value=1), \
+                        patch("terminal_gui.excluir_jogo", return_value=True), \
+                        patch("terminal_gui.excluir_todos_jogos", return_value=2), \
+                        patch("terminal_gui.messagebox.askyesno", return_value=True), \
+                        patch("terminal_gui.simpledialog.askinteger", return_value=1):
+                    app = self.make_app()
+                    app.last_suggestions = [[1, 2, 3, 4, 5, 6]]
+                    app.clear_and_help = Mock()
+                    app._run_background = Mock()
+                    app.dispatch(command)
+                    outputs.append((app.println.call_args_list, app.clear_and_help.call_count,
+                                    app._run_background.call_count))
+            self.assertEqual(outputs[0], outputs[1])
+
+    def test_comparisons_show_all_games_by_descending_hits_then_id(self):
+        app = self.make_app()
+        app._show_latest = Mock()
+        jogos = [
+            {"id": 3, "dezenas": [1, 2, 3, 4, 5, 8]},
+            {"id": 2, "dezenas": [10, 20, 30, 40, 50, 60]},
+            {"id": 1, "dezenas": [1, 2, 3, 4, 5, 7]},
+        ]
+        with patch("terminal_gui.listar_jogos", return_value=jogos):
+            app._fetch_latest_or_cache = Mock(return_value=(3062, "24/09/2026", [1, 2, 3, 4, 5, 6], "local", True))
+            app._run_background = lambda work, show, status: show(work())
+            app.dispatch("comparar")
+        lines = [call.args[0] for call in app.println.call_args_list if call.args]
+        self.assertEqual([line for line in lines if line.startswith("\nJogo")], [
+            "\nJogo id=1 | [1, 2, 3, 4, 5, 7]",
+            "\nJogo id=3 | [1, 2, 3, 4, 5, 8]",
+            "\nJogo id=2 | [10, 20, 30, 40, 50, 60]",
+        ])
+
+    def test_suggestions_display_and_invalid_index_message(self):
+        app = self.make_app()
+        app._show_suggestions([[1, 2, 3, 4, 5, 6]])
+        app.println.assert_any_call("01) [1, 2, 3, 4, 5, 6]")
+        app._save_suggestions_by_indices([2])
+        self.assertTrue(any("válido 1..1" in call.args[0] for call in app.println.call_args_list))
 
     def test_worker_does_not_call_ui_until_queue_is_polled(self):
         app = self.make_app()

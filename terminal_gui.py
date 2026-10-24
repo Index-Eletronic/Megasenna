@@ -31,10 +31,10 @@ def parse_nums(tokens):
       - aceita 6 dezenas
       - cada uma deve estar entre 1 e 60
       - não permite repetição
-      - aceita: add 1 2 3 4 5 6  |  add 1,2,3,4,5,6
+      - aceita: adicionar 1 2 3 4 5 6  |  adicionar 1,2,3,4,5,6
     """
     if not tokens:
-        raise ValueError("Informe 6 dezenas. Ex: add 5 12 23 34 45 60")
+        raise ValueError("Informe 6 dezenas. Ex: adicionar 5 12 23 34 45 60")
 
     tokens = " ".join(tokens).replace(",", " ").split()
 
@@ -42,7 +42,7 @@ def parse_nums(tokens):
     try:
         nums = [int(t) for t in tokens]
     except ValueError:
-        raise ValueError("Use apenas números. Ex: add 5 12 23 34 45 60")
+        raise ValueError("Use apenas números. Ex: adicionar 5 12 23 34 45 60")
 
     if len(nums) != 6:
         raise ValueError(f"Você informou {len(nums)} dezena(s). A Mega-Sena exige exatamente 6.")
@@ -68,7 +68,7 @@ def parse_id(text: str) -> int:
     """
     m = re.fullmatch(r"(?:id\s*[:=]?\s*|#\s*)?([1-9]\d*)", text.strip(), re.IGNORECASE)
     if not m:
-        raise ValueError("ID inválido. Use: del 9 (ou del ID9)")
+        raise ValueError("ID inválido. Use: excluir 9 (ou excluir ID9)")
     return int(m.group(1))
 
 
@@ -180,14 +180,14 @@ class TerminalApp:
     def _show_comparisons(self, result):
         concurso, comparacoes = result
         self._show_latest(concurso)
-        for jogo, comparacao in comparacoes:
+        for jogo, comparacao in sorted(comparacoes, key=lambda item: (-item[1]["acertos_qtd"], item[0]["id"])):
             self.println(f"\nJogo id={jogo['id']} | {jogo['dezenas']}")
             self.println(f"🎯 Acertos: {comparacao['acertos_qtd']} |-> {comparacao['acertos']}")
         self.println()
 
     def _show_suggestions(self, suggestions):
         self.last_suggestions = suggestions
-        self.println("🧠 Jogos distintos e diversificados (use 'save_suggested' para salvar):")
+        self.println("🧠 Jogos distintos e diversificados (use 'salvar_sugestoes' para salvar):")
         for i, suggestion in enumerate(suggestions, 1):
             self.println(f"{i:02d}) {suggestion}")
 
@@ -201,11 +201,11 @@ class TerminalApp:
             payload, fonte = fetch_latest_megasena()
             lines.append(f"Fonte: {fonte}")
             if isinstance(payload, dict):
-                lines.append(f"Chaves do payload: {list(payload.keys())}")
+                lines.append(f"Campos da resposta: {list(payload.keys())}")
             preview = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
             if len(preview) > 900:
                 preview = preview[:900] + "\n... (cortado)"
-            lines.extend(["Payload (preview):", preview])
+            lines.extend(["Prévia da resposta:", preview])
             try:
                 dezenas = dezenas_do_resultado(payload)
                 numero = concurso_numero(payload)
@@ -228,20 +228,24 @@ class TerminalApp:
     def print_help(self):
         self.println()
         self.println("Comandos disponíveis:")
-        self.println("  help                          -> mostra ajuda")
-        self.println("  add N1 N2 N3 N4 N5 N6          -> salva um jogo (DEZENAS 1..60)")
-        self.println("  list                          -> lista jogos salvos")
-        self.println("  del ID                         -> exclui um jogo (aceita: 9, ID9, id=9, #9)")
-        self.println("  delall                        -> exclui TODOS os jogos do banco (com confirmação)")
-        self.println("  latest                        -> mostra último resultado (e salva em cache)")
-        self.println("  compare                       -> compara TODOS jogos com o último resultado (usa cache se offline)")
-        self.println("  suggest [N]                   -> gera N jogos distintos e diversificados (1..200, padrão 10)")
-        self.println("  save_suggested                -> salva TODAS as sugestões geradas por 'suggest'")
-        self.println("  save_suggested 1 3 5          -> salva só as sugestões pelos índices informados")
-        self.println("  save_suggested ask            -> pergunta quantas salvar (no popup)")
-        self.println("  prob                          -> mostra prob. de acertar sena (6/60)")
-        self.println("  clear / cls                   -> limpa a tela e mostra os comandos")
-        self.println("  debuglatest                   -> 🔎 mostra payload bruto e chaves da API")
+        comandos = [
+            ("ajuda", "mostra ajuda"),
+            ("adicionar N1 N2 N3 N4 N5 N6", "salva um jogo com seis dezenas de 1 a 60"),
+            ("listar", "lista jogos salvos"),
+            ("excluir ID", "exclui um jogo (aceita: 9, ID9, id=9, #9)"),
+            ("excluir_todos", "exclui todos os jogos, com confirmação"),
+            ("ultimo", "mostra o último resultado e salva uma cópia local"),
+            ("comparar", "confere todos os jogos, do maior acerto ao menor"),
+            ("sugerir [N]", "gera de 1 a 200 jogos distintos (padrão: 10)"),
+            ("salvar_sugestoes", "salva todas as sugestões geradas"),
+            ("salvar_sugestoes 1 3 5", "salva apenas as sugestões indicadas"),
+            ("salvar_sugestoes perguntar", "pergunta quantas sugestões salvar"),
+            ("probabilidade", "mostra a probabilidade de acertar a sena"),
+            ("limpar", "limpa a tela e mostra os comandos"),
+            ("diagnostico", "mostra a resposta original e os campos da API"),
+        ]
+        for comando, descricao in comandos:
+            self.println(f"  {comando:<29} -> {descricao}")
         self.println("=~ " * 38)
         self.println()
 
@@ -289,7 +293,7 @@ class TerminalApp:
 
     def _save_suggestions_by_indices(self, indices: list[int]):
         if not self.last_suggestions:
-            self.println("⚠️ Nenhuma sugestão na memória. Rode: suggest 10")
+            self.println("⚠️ Nenhuma sugestão na memória. Rode: sugerir 10")
             return
 
         saved_ids = []
@@ -312,6 +316,15 @@ class TerminalApp:
             return
         cmd = parts[0].lower()
         args = parts[1:]
+        aliases = {
+            "ajuda": "help", "adicionar": "add", "listar": "list",
+            "excluir": "del", "excluir_todos": "delall", "ultimo": "latest",
+            "último": "latest", "comparar": "compare", "sugerir": "suggest",
+            "salvar_sugestoes": "save_suggested", "salvar_sugestões": "save_suggested",
+            "probabilidade": "prob", "limpar": "clear", "diagnostico": "debuglatest",
+            "diagnóstico": "debuglatest",
+        }
+        cmd = aliases.get(cmd, cmd)
 
         if cmd in ("help", "?"):
             self.print_help()
@@ -338,7 +351,7 @@ class TerminalApp:
 
         if cmd in ("del", "delete", "rm", "remove"):
             if not args:
-                raise ValueError("Use: del ID  (ex: del 7)")
+                raise ValueError("Use: excluir ID  (ex: excluir 7)")
             jid = parse_id(" ".join(args))
             ok = excluir_jogo(jid)
             self.println(f"🗑️ Jogo id={jid} excluído." if ok else f"⚠️ Não encontrei jogo com id={jid}.")
@@ -359,7 +372,7 @@ class TerminalApp:
         if cmd == "compare":
             jogos = listar_jogos()
             if not jogos:
-                self.println("Você ainda não tem jogos salvos. Use: add ...")
+                self.println("Você ainda não tem jogos salvos. Use: adicionar ...")
                 return
 
             def compare():
@@ -377,7 +390,7 @@ class TerminalApp:
                         raise ValueError
                     n = int(args[0])
                 except ValueError:
-                    raise ValueError("Use: suggest N, com N inteiro de 1 a 200.") from None
+                    raise ValueError("Use: sugerir N, com N inteiro de 1 a 200.") from None
                 if n < 1 or n > 200:
                     raise ValueError("N precisa estar entre 1 e 200.")
             self.println(f"📌 Prob. de acertar a sena por jogo (6/60): {prob_acertar_sena():.10f} (1 em 50.063.860)")
@@ -398,7 +411,7 @@ class TerminalApp:
                 self.println("⏳ Aguarde a consulta ou geração em andamento antes de salvar sugestões.")
                 return
             if not self.last_suggestions:
-                self.println("⚠️ Nenhuma sugestão na memória. Rode: suggest 10")
+                self.println("⚠️ Nenhuma sugestão na memória. Rode: sugerir 10")
                 return
 
             if not args:
@@ -406,7 +419,7 @@ class TerminalApp:
                 self._save_suggestions_by_indices(indices)
                 return
 
-            if args[0].lower() == "ask":
+            if args[0].lower() in ("perguntar", "ask"):
                 q = simpledialog.askinteger(
                     "Salvar sugestões",
                     f"Quantas sugestões salvar? (1..{len(self.last_suggestions)})",
@@ -423,7 +436,7 @@ class TerminalApp:
             try:
                 indices = [int(x) for x in args]
             except ValueError:
-                raise ValueError("Informe índices inteiros. Exemplo: save_suggested 1 3 5") from None
+                raise ValueError("Informe índices inteiros. Exemplo: salvar_sugestoes 1 3 5") from None
             self._save_suggestions_by_indices(indices)
             return
 
@@ -436,7 +449,7 @@ class TerminalApp:
             self._run_background(self._debug_latest, self._show_lines, "🔎 Consultando dados da API…")
             return
 
-        raise ValueError("Comando desconhecido. Digite 'help' para ver os comandos.")
+        raise ValueError("Comando desconhecido. Digite 'ajuda' para ver os comandos.")
 
 
 if __name__ == "__main__":
