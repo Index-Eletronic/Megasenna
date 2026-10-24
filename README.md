@@ -111,7 +111,10 @@ py -3.13 -m unittest discover -s tests -v
 ./build.ps1
 ```
 
-Saída: `dist/Megasenna/Megasenna.exe`. O executável antigo `dist/Megasena.exe` não é substituído.
+Saídas: `dist/Megasenna/Megasenna.exe` (interface de abas) e
+`dist/Megasena.exe` (terminal com comandos em português). O terminal anterior
+é substituído pela versão atualizada. Se existir `.venv-build`, o script usa
+esse ambiente; caso contrário, usa o comando `python`.
 O banco com jogos pessoais não é embutido no programa. O PyInstaller empacota o
 Python e o Tkinter; não há servidor, conta online ou serviço de banco a instalar.
 
