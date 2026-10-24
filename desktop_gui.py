@@ -15,6 +15,10 @@ from megasena.stats import (
     cobertura_sena, gerar_jogos_sugeridos, probabilidades_jogo_simples,
 )
 from megasena.sync import sincronizar_historico
+from megasena.portfolio import (
+    analisar_carteira, otimizar_carteira, preco_centavos, linhas_cobertura,
+    conferir_concurso, linhas_conferencia, importar_carteira,
+)
 
 
 def dezenas_texto(nums):
@@ -46,7 +50,7 @@ class MegaSenaApp:
         style.configure("TButton", padding=(12, 7), font=("Segoe UI", 10))
         style.configure("Treeview", rowheight=28, font=("Segoe UI", 10))
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
-        style.configure("TNotebook.Tab", padding=(18, 9))
+        style.configure("TNotebook.Tab", padding=(12, 9))
         shell = ttk.Frame(root, padding=20)
         shell.pack(fill="both", expand=True)
         ttk.Label(shell, text="Megasenna", style="Title.TLabel").pack(anchor="w")
@@ -64,6 +68,7 @@ class MegaSenaApp:
         self._history_tab()
         self._stats_tab()
         self._games_tab()
+        self._portfolio_tab()
         self._validation_tab()
         self.progress = ttk.Progressbar(shell, mode="determinate")
         self.progress.pack(fill="x", pady=(10, 5))
@@ -161,6 +166,145 @@ class MegaSenaApp:
         self.backtest_output.pack(fill="both", expand=True)
         self.write(self.backtest_output, "A avaliação é retrospectiva e descritiva. Não comprova capacidade de prever sorteios futuros.\nSomente concursos anteriores a cada resultado podem compor o treino.")
 
+    def _portfolio_tab(self):
+        frame = self.tab('Carteira e concursos')
+        ttk.Label(frame, text='Vincule os jogos ao concurso desejado. O vínculo preserva as dezenas, mas não confirma pagamento.', wraplength=1000).pack(anchor='w')
+        line = ttk.Frame(frame)
+        line.pack(fill='x', pady=8)
+        ttk.Label(line, text='Concurso:').pack(side='left')
+        self.contest_number = ttk.Entry(line, width=9)
+        self.contest_number.pack(side='left', padx=6)
+        ttk.Button(line, text='Vincular carteira escolhida', command=lambda: self.safe(self.bind_contest)).pack(side='left', padx=6)
+        ttk.Button(line, text='Conferir concurso', command=lambda: self.safe(self.check_contest)).pack(side='left', padx=6)
+        ttk.Button(line, text='Backup agora', command=lambda: self.safe(self.manual_backup)).pack(side='left', padx=6)
+        self.contest_note = tk.StringVar(value='Informe o número do concurso para conferir.')
+        ttk.Label(frame, textvariable=self.contest_note, wraplength=1000).pack(anchor='w')
+        self.contest_table = self.table(frame, ('id', 'numbers', 'hits', 'matched', 'tier'),
+            ('Registro', 'Dezenas', 'Acertos', 'Dezenas acertadas', 'Faixa'), (80, 270, 80, 240, 180), height=5)
+        controls = ttk.Frame(frame)
+        controls.pack(fill='x', pady=5)
+        ttk.Label(controls, text='Analisar:').pack(side='left')
+        self.portfolio_source = ttk.Combobox(controls, values=('Jogos salvos', 'Sugestões', 'Concurso informado'), state='readonly', width=19)
+        self.portfolio_source.set('Jogos salvos')
+        self.portfolio_source.pack(side='left', padx=5)
+        ttk.Label(controls, text='Preço por jogo (R$):').pack(side='left')
+        self.unit_price = ttk.Entry(controls, width=7)
+        self.unit_price.insert(0, '6,00')
+        self.unit_price.pack(side='left', padx=5)
+        ttk.Button(controls, text='Calcular cobertura e custo', command=lambda: self.safe(self.analyze_portfolio)).pack(side='left', padx=5)
+        optimize = ttk.Frame(frame)
+        optimize.pack(fill='x', pady=5)
+        self.portfolio_target = ttk.Combobox(optimize, values=('quadra', 'quina'), state='readonly', width=9)
+        self.portfolio_target.set('quadra')
+        self.portfolio_target.pack(side='left')
+        ttk.Button(optimize, text='Otimizar mesma quantidade', command=lambda: self.safe(self.optimize_portfolio)).pack(side='left', padx=6)
+        ttk.Button(optimize, text='Exportar alternativa JSON', command=lambda: self.safe(self.export_alternative)).pack(side='left', padx=6)
+        ttk.Button(optimize, text='Importar carteira JSON', command=lambda: self.safe(self.import_portfolio)).pack(side='left', padx=6)
+        self.portfolio_output = scrolledtext.ScrolledText(frame, height=10, font=('Consolas', 10), wrap='word', state='disabled')
+        self.portfolio_output.pack(fill='both', expand=True, pady=5)
+        self.write(self.portfolio_output, 'Calcule a união exata dos resultados cobertos por até 200 jogos.\nQuadra ou mais inclui quina e sena; quina ou mais inclui sena.\nPreço inicial de referência: R$ 6,00. Ajuste conforme o valor cobrado.\nA alternativa otimizada fica nas sugestões para revisão e exportação.\nBackups automáticos ficam na pasta backups ao lado do banco local.')
+        self.optimized_portfolio = None
+
+    def _contest_id(self):
+        numero = int(self.contest_number.get())
+        if numero < 1:
+            raise ValueError('Informe um número de concurso positivo.')
+        return numero
+
+    def bind_contest(self):
+        if self.busy:
+            raise ValueError('Aguarde a operação em andamento.')
+        numero = self._contest_id()
+        valor = preco_centavos(self.unit_price.get())
+        jogos = self._portfolio_games()
+        source = self.portfolio_source.get()
+        if not messagebox.askyesno('Vincular carteira', f'Adicionar os {len(jogos)} jogos de {source} ao concurso {numero}? Jogos já vinculados serão mantidos. O vínculo não confirma pagamento.', parent=self.root):
+            return
+        quantidade = storage.vincular_carteira_concurso(numero, jogos, valor)
+        self.check_contest()
+        self.status.set(f'{quantidade} novos jogos vinculados ao concurso {numero}. Backup criado antes do vínculo.')
+
+    def check_contest(self):
+        result = conferir_concurso(self._contest_id())
+        self.contest_table.delete(*self.contest_table.get_children())
+        for row in result['resultados']:
+            self.contest_table.insert('', 'end', values=(row['id'], dezenas_texto(row['dezenas']), row['acertos_qtd'], dezenas_texto(row['acertos']), row['faixa']))
+        self.contest_note.set('\n'.join(linhas_conferencia(result)[:3]))
+
+    def _portfolio_games(self):
+        source = self.portfolio_source.get()
+        if source == 'Sugestões':
+            jogos = [j[:] for j in self.suggestions]
+        elif source == 'Concurso informado':
+            jogos = [j['dezenas'] for j in storage.listar_apostas_concurso(self._contest_id())]
+        else:
+            jogos = [j['dezenas'] for j in storage.listar_jogos()]
+        if not jogos:
+            raise ValueError('A carteira escolhida não contém jogos.')
+        return jogos
+
+    def analyze_portfolio(self):
+        jogos = self._portfolio_games()
+        valor = preco_centavos(self.unit_price.get())
+        source = self.portfolio_source.get()
+        # Para carteiras vinculadas o custo usa os valores registrados em cada jogo.
+        custo_registrado = None
+        if source == 'Concurso informado':
+            custo_registrado = sum(j['valor_centavos'] for j in storage.listar_apostas_concurso(self._contest_id()))
+        def work():
+            analise = analisar_carteira(jogos, valor)
+            if custo_registrado is not None:
+                analise['custo_centavos'] = custo_registrado
+                analise['origem_custo'] = 'valores registrados nos vínculos'
+            return analise
+        def done(result):
+            self.write(self.portfolio_output, '\n'.join([f'Carteira: {source}'] + linhas_cobertura(result)))
+            self.status.set('Cobertura exata concluída: resultados compartilhados contados uma única vez.')
+        self.start_job(work, done, 'Calculando cobertura exata da carteira…')
+
+    def optimize_portfolio(self):
+        jogos = self._portfolio_games()
+        valor = preco_centavos(self.unit_price.get())
+        if self.portfolio_source.get() == 'Concurso informado':
+            valores = {j['valor_centavos'] for j in storage.listar_apostas_concurso(self._contest_id())}
+            if len(valores) != 1:
+                raise ValueError('A carteira tem preços diferentes. Selecione Jogos salvos para simular um preço único.')
+            valor = valores.pop()
+        objetivo = self.portfolio_target.get()
+        def done(result):
+            self.optimized_portfolio = result
+            self.suggestions = result['jogos']
+            lines = [f'Objetivo: {objetivo} ou mais', 'ANTES:'] + linhas_cobertura(result['antes'])
+            lines += ['', 'ALTERNATIVA:'] + linhas_cobertura(result['depois'])
+            lines += [f"Ganho: {result['ganho_resultados']} resultados distintos na faixa escolhida.", result['aviso'],
+                      'Jogos originais e vínculos preservados. A alternativa está nas sugestões para revisão.', '']
+            lines += [f'{i:02d}) {dezenas_texto(j)}' for i, j in enumerate(result['jogos'], 1)]
+            self.write(self.portfolio_output, '\n'.join(lines))
+            self.write(self.game_output, '\n'.join(lines))
+            self.status.set('Alternativa calculada com a mesma quantidade e preço unitário informado.')
+        self.start_job(lambda: otimizar_carteira(jogos, objetivo, valor), done, 'Otimizando carteira e validando cobertura exata…')
+
+    def export_alternative(self):
+        if not self.optimized_portfolio:
+            raise ValueError('Otimize uma carteira antes de exportar.')
+        self.export_json('carteira-otimizada.json', self.optimized_portfolio)
+
+    def import_portfolio(self):
+        if self.busy:
+            raise ValueError('Aguarde a operação em andamento.')
+        path = filedialog.askopenfilename(parent=self.root, filetypes=[('Carteira JSON', '*.json')])
+        if path:
+            self.suggestions = importar_carteira(path)
+            self.portfolio_source.set('Sugestões')
+            self.optimized_portfolio = None
+            self.write(self.game_output, '\n'.join(f'{i:02d}) {dezenas_texto(j)}' for i, j in enumerate(self.suggestions, 1)))
+            self.write(self.portfolio_output, f'{len(self.suggestions)} jogos importados para análise. Use Calcular cobertura e custo.\nO banco e os vínculos não foram alterados.')
+            self.status.set('Carteira importada nas sugestões. Revise antes de salvar ou vincular.')
+
+    def manual_backup(self):
+        path = storage.criar_backup()
+        self.status.set(f'Backup íntegro salvo em {path}')
+
     @staticmethod
     def write(widget, text):
         widget.configure(state="normal")
@@ -232,6 +376,12 @@ class MegaSenaApp:
         unique = len({tuple(g['dezenas']) for g in games})
         probability = cobertura_sena([g['dezenas'] for g in games])
         self.coverage.set(f"{len(games)} registros · {unique} jogos distintos · cobertura da sena: {probability*100:.8f}% por concurso se todos forem apostados.")
+        if not self.contest_number.get().strip():
+            vinculados = storage.concursos_vinculados()
+            if vinculados:
+                self.contest_number.insert(0, str(vinculados[0]))
+        if self.contest_number.get().strip():
+            self.safe(self.check_contest)
 
     def add_game(self):
         nums = ler_dezenas(self.game_entry.get())
@@ -322,6 +472,10 @@ class MegaSenaApp:
                 self.status.set(f"Histórico completo até o concurso {result['ultimo_oficial']}. {result['baixados']} resultados atualizados.")
             else:
                 self.status.set(f"Atualização {result['status']}. Dados recebidos foram preservados. {len(result['falhas'])} falhas; execute novamente para retomar.")
+            # Confere todas as carteiras vinculadas após atualizar o histórico.
+            conferidos = [conferir_concurso(n) for n in storage.concursos_vinculados()]
+            premios = sum(r['acertos_qtd'] >= 4 for c in conferidos for r in c['resultados'])
+            self.status.set(self.status.get() + f" Conferência automática: {premios} jogos com 4+ acertos nas carteiras vinculadas. Backup: {result.get('backup') or 'sem alteração'}")
 
         self.safe(lambda: self.start_job(work, done, "Consultando último concurso na CAIXA…", cancellable=True))
 

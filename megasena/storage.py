@@ -104,11 +104,21 @@ def _unir_bancos_legados(destino: Path, outras_origens: list[Path]) -> None:
 
 def init_db() -> None:
     _migrar_banco_legado()
+    if Path(DB_PATH).is_file():
+        with connect() as con:
+            tem_vinculos = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='apostas_concurso'").fetchone()
+        if not tem_vinculos:
+            criar_backup('migracao')
     with connect() as con:
         con.execute("""CREATE TABLE IF NOT EXISTS jogos (
             id INTEGER PRIMARY KEY AUTOINCREMENT, criado_em TEXT NOT NULL, dezenas TEXT NOT NULL)""")
         con.execute("""CREATE TABLE IF NOT EXISTS concursos (
             numero INTEGER PRIMARY KEY, data_apuracao TEXT, dezenas TEXT NOT NULL)""")
+        con.execute("""CREATE TABLE IF NOT EXISTS apostas_concurso (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero INTEGER NOT NULL, jogo_id INTEGER,
+            dezenas TEXT NOT NULL, valor_centavos INTEGER NOT NULL,
+            criado_em TEXT NOT NULL, UNIQUE(numero, dezenas))""")
     # O pacote inclui somente resultados públicos. Nunca embutir o banco de jogos.
     base_recursos = getattr(sys, "_MEIPASS", None)
     seed = Path(base_recursos) / "assets" / "concursos.json" if base_recursos else None
@@ -192,6 +202,93 @@ def salvar_concurso(numero: int, data_apuracao: str | None, dezenas: list[int]) 
             data_apuracao = excluded.data_apuracao, dezenas = excluded.dezenas""", valores)
 
 
+def criar_backup(motivo: str = 'manual') -> Path:
+    """Snapshot SQLite consistente, inclusive de páginas ainda no WAL.
+
+    Uma falha é propagada para impedir que a atualização prossiga sem backup.
+    As cópias ficam ao lado do banco, sem apagar versões anteriores.
+    """
+    banco = Path(DB_PATH).resolve()
+    if not banco.is_file():
+        raise ValueError('Banco local não encontrado para backup.')
+    pasta = banco.parent / 'backups'
+    pasta.mkdir(parents=True, exist_ok=True)
+    motivo = ''.join(c for c in motivo if c.isalnum() or c in '-_')[:40] or 'manual'
+    nome = f"app-{datetime.now():%Y%m%d-%H%M%S-%f}-{motivo}-{uuid.uuid4().hex[:8]}.db"
+    destino = pasta / nome
+    parcial = destino.with_suffix('.parcial')
+    try:
+        with sqlite3.connect(banco.as_uri() + '?mode=ro', uri=True, factory=_Connection) as origem:
+            with sqlite3.connect(parcial, factory=_Connection) as copia:
+                origem.backup(copia)
+                if copia.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
+                    raise RuntimeError('A cópia de segurança não passou na verificação de integridade.')
+        parcial.replace(destino)
+    finally:
+        parcial.unlink(missing_ok=True)
+    return destino
+
+
+def atualizar_concurso(numero, data_apuracao, dezenas):
+    criar_backup('resultado')
+    salvar_concurso(numero, data_apuracao, dezenas)
+
+
+def vincular_jogos_concurso(numero: int, ids=None, valor_centavos=600) -> int:
+    """Copia os jogos para o concurso; exclusão do jogo original não apaga a cópia.
+
+    O vínculo registra a carteira informada pelo usuário, não confirma pagamento.
+    """
+    numero = _numero_positivo(numero)
+    _numero_positivo(valor_centavos)
+    jogos = listar_jogos()
+    if ids is not None:
+        ids = {_numero_positivo(i) for i in ids}
+        if ids - {j['id'] for j in jogos}:
+            raise ValueError('Há IDs de jogos não encontrados. Nenhum vínculo foi criado.')
+        jogos = [j for j in jogos if j['id'] in ids]
+    if not jogos:
+        raise ValueError('Nenhum jogo salvo para vincular.')
+    criar_backup('vincular')
+    with connect() as con:
+        antes = con.total_changes
+        con.executemany('''INSERT OR IGNORE INTO apostas_concurso
+            (numero, jogo_id, dezenas, valor_centavos, criado_em) VALUES (?, ?, ?, ?, ?)''',
+            [(numero, j['id'], _dezenas_texto(j['dezenas']), valor_centavos,
+              datetime.now().isoformat(timespec='seconds')) for j in jogos])
+        return con.total_changes - antes
+
+
+def listar_apostas_concurso(numero: int) -> list[dict]:
+    with connect() as con:
+        rows = con.execute('''SELECT id, jogo_id, dezenas, valor_centavos, criado_em
+            FROM apostas_concurso WHERE numero = ? ORDER BY id''', (_numero_positivo(numero),)).fetchall()
+    return [{'id': i, 'jogo_id': jogo_id, 'dezenas': _dezenas_validas([int(n) for n in texto.split(',')]),
+             'valor_centavos': valor, 'criado_em': data, 'numero': numero}
+            for i, jogo_id, texto, valor, data in rows]
+
+
+def vincular_carteira_concurso(numero, jogos, valor_centavos=600):
+    """Vincula uma carteira revisada sem adicioná-la aos jogos salvos."""
+    numero = _numero_positivo(numero)
+    _numero_positivo(valor_centavos)
+    textos = [_dezenas_texto(j) for j in jogos]
+    if not textos:
+        raise ValueError('A carteira não contém jogos.')
+    criar_backup('vincular')
+    with connect() as con:
+        antes = con.total_changes
+        con.executemany('''INSERT OR IGNORE INTO apostas_concurso
+            (numero, jogo_id, dezenas, valor_centavos, criado_em) VALUES (?, NULL, ?, ?, ?)''',
+            [(numero, t, valor_centavos, datetime.now().isoformat(timespec='seconds')) for t in textos])
+        return con.total_changes - antes
+
+
+def concursos_vinculados():
+    with connect() as con:
+        return [r[0] for r in con.execute('SELECT DISTINCT numero FROM apostas_concurso ORDER BY numero DESC')]
+
+
 def _concurso_dict(row) -> dict:
     numero, data, texto = row
     return {"numero": _numero_positivo(numero), "data_apuracao": _data_valida(data),
@@ -267,6 +364,7 @@ def importar_historico(caminho: str | Path) -> int:
             raise ValueError(f"Concurso {numero} repetido no arquivo.")
         vistos.add(numero)
         valores.append((numero, data, texto))
+    criar_backup('importacao')
     with connect() as con:
         inseridos = 0
         for numero, data, texto in valores:

@@ -13,7 +13,7 @@ from megasena.storage import (
     init_db,
     salvar_jogo,
     listar_jogos,
-    salvar_concurso,
+    atualizar_concurso as salvar_concurso,
     ler_ultimo_concurso_salvo,
 )
 from megasena.stats import gerar_jogos_sugeridos, prob_acertar_sena

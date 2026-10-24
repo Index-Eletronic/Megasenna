@@ -1,0 +1,267 @@
+{
+  "jogos": [
+    [
+      9,
+      21,
+      26,
+      39,
+      48,
+      56
+    ],
+    [
+      5,
+      10,
+      23,
+      33,
+      42,
+      53
+    ],
+    [
+      3,
+      5,
+      15,
+      37,
+      51,
+      56
+    ],
+    [
+      4,
+      21,
+      44,
+      50,
+      54,
+      57
+    ],
+    [
+      2,
+      19,
+      23,
+      39,
+      41,
+      51
+    ],
+    [
+      21,
+      25,
+      30,
+      31,
+      33,
+      46
+    ],
+    [
+      16,
+      37,
+      52,
+      55,
+      57,
+      59
+    ],
+    [
+      14,
+      22,
+      27,
+      31,
+      40,
+      50
+    ],
+    [
+      4,
+      8,
+      9,
+      13,
+      58,
+      59
+    ],
+    [
+      12,
+      13,
+      14,
+      24,
+      38,
+      44
+    ],
+    [
+      15,
+      26,
+      28,
+      44,
+      58,
+      60
+    ],
+    [
+      16,
+      25,
+      36,
+      45,
+      48,
+      50
+    ],
+    [
+      3,
+      6,
+      17,
+      35,
+      43,
+      44
+    ],
+    [
+      8,
+      18,
+      23,
+      35,
+      47,
+      54
+    ],
+    [
+      2,
+      11,
+      34,
+      35,
+      49,
+      58
+    ],
+    [
+      7,
+      11,
+      24,
+      29,
+      32,
+      47
+    ],
+    [
+      4,
+      19,
+      20,
+      30,
+      43,
+      55
+    ],
+    [
+      27,
+      34,
+      38,
+      52,
+      53,
+      60
+    ],
+    [
+      1,
+      6,
+      19,
+      22,
+      29,
+      49
+    ],
+    [
+      7,
+      20,
+      26,
+      40,
+      42,
+      57
+    ],
+    [
+      10,
+      20,
+      24,
+      28,
+      41,
+      54
+    ],
+    [
+      18,
+      32,
+      42,
+      43,
+      46,
+      51
+    ],
+    [
+      1,
+      4,
+      11,
+      27,
+      28,
+      36
+    ],
+    [
+      9,
+      14,
+      18,
+      41,
+      45,
+      53
+    ],
+    [
+      15,
+      17,
+      30,
+      32,
+      36,
+      40
+    ]
+  ],
+  "antes": {
+    "registros": 25,
+    "distintos": 25,
+    "duplicados": 0,
+    "valor_centavos": 600,
+    "custo_centavos": 15000,
+    "faixas": {
+      "quadra_ou_mais": {
+        "favoraveis": 544714,
+        "total": 50063860,
+        "probabilidade": 0.010880383574099161,
+        "um_em": 91.90852447339337
+      },
+      "quina_ou_mais": {
+        "favoraveis": 8125,
+        "total": 50063860,
+        "probabilidade": 0.0001622927197383502,
+        "um_em": 6161.705846153846
+      },
+      "sena": {
+        "favoraveis": 25,
+        "total": 50063860,
+        "probabilidade": 4.99362214579539e-07,
+        "um_em": 2002554.4
+      }
+    }
+  },
+  "depois": {
+    "registros": 25,
+    "distintos": 25,
+    "duplicados": 0,
+    "valor_centavos": 600,
+    "custo_centavos": 15000,
+    "faixas": {
+      "quadra_ou_mais": {
+        "favoraveis": 544750,
+        "total": 50063860,
+        "probabilidade": 0.010881102655688155,
+        "um_em": 91.90245066544287
+      },
+      "quina_ou_mais": {
+        "favoraveis": 8125,
+        "total": 50063860,
+        "probabilidade": 0.0001622927197383502,
+        "um_em": 6161.705846153846
+      },
+      "sena": {
+        "favoraveis": 25,
+        "total": 50063860,
+        "probabilidade": 4.99362214579539e-07,
+        "um_em": 2002554.4
+      }
+    }
+  },
+  "objetivo": "quadra",
+  "ganho_resultados": 36,
+  "seed": 42,
+  "aviso": "Busca heurística com cobertura final exata; não garante o ótimo global nem prevê sorteios.",
+  "data_geracao": "2026-10-24",
+  "modalidade": "Mega-Sena",
+  "tipo_aposta": "simples",
+  "origem": "assets/carteira-25-2026-09-25.json",
+  "situacao": "alternativa para revisao; nao representa aposta realizada"
+}

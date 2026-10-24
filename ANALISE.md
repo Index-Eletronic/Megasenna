@@ -72,8 +72,8 @@ produto passar a consultar milhões de bilhetes ou várias modalidades.
 
 ## Próximas evoluções possíveis
 
-- Vincular apostas efetivamente realizadas a concursos e distinguir essas apostas
-  de sugestões e conferências retrospectivas.
+- Anexar comprovantes de apostas efetivamente realizadas aos vínculos por concurso;
+  o vínculo da carteira já existe, mas não confirma pagamento.
 - Backup/restauração com seleção explícita de múltiplos bancos legados.
 - Apostas de 7 a 20 dezenas e cálculo de cobertura da união de combinações.
 - Avaliação prospectiva registrada antes de cada sorteio e intervalos de incerteza.

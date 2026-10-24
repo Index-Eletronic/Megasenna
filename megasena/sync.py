@@ -4,7 +4,7 @@ from collections.abc import Callable
 from threading import Event
 
 from .api import concurso_data, concurso_numero, dezenas_do_resultado, fetch_latest_megasena, fetch_megasena_concurso, MegaSenaAPIError
-from .storage import init_db, resumo_historico, salvar_concurso
+from .storage import init_db, resumo_historico, salvar_concurso, criar_backup
 
 
 def sincronizar_historico(
@@ -24,6 +24,7 @@ def sincronizar_historico(
     baixados = 0
     falhas = []
     fonte = None
+    backup = None
 
     def cancelado():
         return cancelar is not None and cancelar.is_set()
@@ -35,7 +36,7 @@ def sincronizar_historico(
             faltantes = [n for n in faltantes if n <= oficial]
             faltantes.extend(range((resumo["ultimo"] or 0) + 1, oficial + 1))
             faltantes = sorted(set(faltantes))
-        resumo.update({"status": status, "ultimo_oficial": oficial, "baixados": baixados,
+        resumo.update({"status": status, "ultimo_oficial": oficial, "baixados": baixados, "backup": str(backup) if backup else None,
                        "falhas": falhas, "fonte": fonte, "lacunas": faltantes,
                        "completo": status == "concluido" and oficial is not None and
                        not faltantes and not resumo["invalidos"] and resumo["ultimo"] == oficial})
@@ -54,6 +55,7 @@ def sincronizar_historico(
         anteriores = set(resumo["lacunas"])
         if oficial > (resumo["ultimo"] or 0) or oficial in anteriores:
             baixados += 1
+        backup = criar_backup('atualizacao')
         salvar_concurso(oficial, concurso_data(payload), dezenas_do_resultado(payload))
     except MegaSenaAPIError as exc:
         falhas.append({"numero": None, "erro": str(exc)})

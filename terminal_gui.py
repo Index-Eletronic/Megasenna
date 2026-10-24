@@ -19,10 +19,16 @@ from megasena.storage import (
     listar_jogos,
     excluir_jogo,
     excluir_todos_jogos,
-    salvar_concurso,
+    atualizar_concurso as salvar_concurso,
     ler_ultimo_concurso_salvo,
 )
 from megasena.stats import gerar_jogos_sugeridos, prob_acertar_sena
+from megasena import storage
+from megasena.sync import sincronizar_historico
+from megasena.portfolio import (
+    analisar_carteira, otimizar_carteira, preco_centavos, linhas_cobertura,
+    conferir_concurso, linhas_conferencia, importar_carteira,
+)
 
 
 def parse_nums(tokens):
@@ -102,6 +108,7 @@ class TerminalApp:
 
         # guarda as últimas sugestões geradas (sessão)
         self.last_suggestions: list[list[int]] = []
+        self.suggestion_price_centavos = 600
         self._background_results = Queue()
         self._busy = False
         self._closed = False
@@ -176,6 +183,8 @@ class TerminalApp:
         numero, data, dezenas, fonte, from_cache = result
         tag = "📦 cache local, pode estar desatualizado" if from_cache else "🌐 online"
         self.println(f"📣 Concurso: {numero} ({data}) | Dezenas: {dezenas} ({tag}, fonte: {fonte})")
+        if storage.listar_apostas_concurso(numero):
+            self._show_lines(linhas_conferencia(conferir_concurso(numero)))
 
     def _show_comparisons(self, result):
         concurso, comparacoes = result
@@ -187,6 +196,7 @@ class TerminalApp:
 
     def _show_suggestions(self, suggestions):
         self.last_suggestions = suggestions
+        self.suggestion_price_centavos = 600
         self.println("🧠 Jogos distintos e diversificados (use 'salvar_sugestoes' para salvar):")
         for i, suggestion in enumerate(suggestions, 1):
             self.println(f"{i:02d}) {suggestion}")
@@ -243,6 +253,13 @@ class TerminalApp:
             ("probabilidade", "mostra a probabilidade de acertar a sena"),
             ("limpar", "limpa a tela e mostra os comandos"),
             ("diagnostico", "mostra a resposta original e os campos da API"),
+            ("vincular CONCURSO [IDs|sugestoes]", "vincula carteira ao concurso (padrão: todos os salvos)"),
+            ("conferir CONCURSO", "confere a carteira vinculada, com mais acertos primeiro"),
+            ("atualizar", "faz backup, atualiza histórico e confere carteiras vinculadas"),
+            ("cobertura [sugestoes] [PRECO]", "cobertura exata e custo (padrão: salvos, R$ 6,00)"),
+            ("otimizar quadra|quina [sugestoes] [PRECO]", "mesmo tamanho; alternativa nas sugestões"),
+            ("backup", "salva uma cópia íntegra do banco local"),
+            ("importar_carteira CAMINHO", "carrega jogos JSON nas sugestões para revisão"),
         ]
         for comando, descricao in comandos:
             self.println(f"  {comando:<29} -> {descricao}")
@@ -325,6 +342,77 @@ class TerminalApp:
             "diagnóstico": "debuglatest",
         }
         cmd = aliases.get(cmd, cmd)
+
+        if cmd == 'importar_carteira':
+            if self._busy:
+                raise ValueError('Aguarde a operação em andamento.')
+            caminho = line.partition(' ')[2].strip().strip('"')
+            if not caminho:
+                raise ValueError('Use: importar_carteira CAMINHO DO JSON')
+            self._show_suggestions(importar_carteira(caminho))
+            return
+
+        if cmd in ('vincular', 'conferir', 'atualizar', 'cobertura', 'otimizar', 'backup'):
+            if self._busy:
+                raise ValueError('Aguarde a operação em andamento.')
+            if cmd == 'backup':
+                if args:
+                    raise ValueError('Use: backup')
+                self.println(f'Backup salvo em {storage.criar_backup()}')
+            elif cmd == 'vincular':
+                if not args:
+                    raise ValueError('Use: vincular CONCURSO [IDs dos jogos]')
+                numero = int(args[0])
+                if len(args) == 2 and args[1].lower() == 'sugestoes':
+                    total = storage.vincular_carteira_concurso(numero, self.last_suggestions, getattr(self, 'suggestion_price_centavos', 600))
+                else:
+                    ids = [parse_id(i) for i in args[1:]] if len(args) > 1 else None
+                    total = storage.vincular_jogos_concurso(numero, ids)
+                self.println(f'{total} jogos vinculados ao concurso {numero}. O vínculo não confirma pagamento.')
+                self._show_lines(linhas_conferencia(conferir_concurso(numero)))
+            elif cmd == 'conferir':
+                if len(args) != 1:
+                    raise ValueError('Use: conferir CONCURSO')
+                self._show_lines(linhas_conferencia(conferir_concurso(int(args[0]))))
+            elif cmd == 'atualizar':
+                if args:
+                    raise ValueError('Use: atualizar')
+                def work():
+                    result = sincronizar_historico()
+                    lines = [f"Atualização: {result['status']} · {result['baixados']} resultados · backup: {result['backup']}"]
+                    for n in storage.concursos_vinculados():
+                        lines += linhas_conferencia(conferir_concurso(n))
+                    return lines
+                self._run_background(work, self._show_lines, 'Atualizando histórico com backup automático…')
+            elif cmd == 'cobertura':
+                sugestoes = bool(args and args[0].lower() == 'sugestoes')
+                valores = args[1:] if sugestoes else args
+                if len(valores) > 1:
+                    raise ValueError('Use: cobertura [sugestoes] [PRECO POR JOGO]')
+                valor = preco_centavos(valores[0]) if valores else 600
+                jogos = [j[:] for j in self.last_suggestions] if sugestoes else [j['dezenas'] for j in listar_jogos()]
+                self._run_background(lambda: linhas_cobertura(analisar_carteira(jogos, valor)), self._show_lines,
+                                     'Calculando a união exata de quadra ou mais e quina ou mais…')
+            else:
+                if not args or args[0].lower() not in ('quadra', 'quina'):
+                    raise ValueError('Use: otimizar quadra|quina [sugestoes] [PRECO POR JOGO]')
+                objetivo = args[0].lower()
+                sugestoes = len(args) > 1 and args[1].lower() == 'sugestoes'
+                valores = args[2:] if sugestoes else args[1:]
+                if len(valores) > 1:
+                    raise ValueError('Use: otimizar quadra|quina [sugestoes] [PRECO POR JOGO]')
+                valor = preco_centavos(valores[0]) if valores else 600
+                jogos = [j[:] for j in self.last_suggestions] if sugestoes else [j['dezenas'] for j in listar_jogos()]
+                def done(result):
+                    self.last_suggestions = result['jogos']
+                    self._show_lines(['ANTES:'] + linhas_cobertura(result['antes']) + ['ALTERNATIVA:'] + linhas_cobertura(result['depois']))
+                    self.println(f"Ganho: {result['ganho_resultados']} resultados na faixa escolhida. {result['aviso']}")
+                    self._show_suggestions(result['jogos'])
+                    self.suggestion_price_centavos = result['depois']['valor_centavos']
+                    self.println('Jogos originais e vínculos preservados. Salvar sugestões adiciona jogos ao banco; não substitui a carteira.')
+                self._run_background(lambda: otimizar_carteira(jogos, objetivo, valor), done,
+                                     'Otimizando carteira com a mesma quantidade e custo…')
+            return
 
         if cmd in ("help", "?"):
             self.print_help()

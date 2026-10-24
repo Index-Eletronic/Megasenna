@@ -84,9 +84,9 @@ class DesktopTests(unittest.TestCase):
         self.insert(self.app.game_entry, text)
         self.find_button("Salvar jogo").invoke()
 
-    def test_startup_builds_four_tabs_without_network_or_visible_window(self):
+    def test_startup_builds_five_tabs_without_network_or_visible_window(self):
         names = [self.app.tabs.tab(tab, "text") for tab in self.app.tabs.tabs()]
-        self.assertEqual(names, ["Concursos", "Estatísticas", "Meus jogos e sugestões", "Probabilidades e avaliação"])
+        self.assertEqual(names, ["Concursos", "Estatísticas", "Meus jogos e sugestões", "Carteira e concursos", "Probabilidades e avaliação"])
         self.assertEqual(self.root.state(), "withdrawn")
         self.assertEqual(self.app.history_table.get_children(), ())
         self.assertEqual(self.app.games_table.get_children(), ())
@@ -228,6 +228,36 @@ class DesktopTests(unittest.TestCase):
         self.assertIn("falha simulada", self.errors.call_args.args[1])
         self.assertEqual(str(self.app.sync_button.cget("state")), "normal")
         self.assertEqual(str(self.app.cancel_button.cget("state")), "disabled")
+
+    def test_contest_conference_and_exact_portfolio_analysis(self):
+        self.populate_history()
+        self.add_game()
+        self.insert(self.app.contest_number, '7')
+        with patch('desktop_gui.storage.criar_backup', return_value=Path('backup.db')):
+            self.find_button('Vincular carteira escolhida').invoke()
+        rows = self.app.contest_table.get_children()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(self.app.contest_table.item(rows[0], 'values')[-1], 'Sena')
+        self.find_button('Calcular cobertura e custo').invoke()
+        self.wait_for_job()
+        output = self.app.portfolio_output.get('1.0', 'end')
+        self.assertIn('21790/50063860', output)
+        self.assertIn('R$ 6,00', output)
+        self.errors.assert_not_called()
+
+    def test_optimizer_displays_comparison_without_replacing_saved_games(self):
+        self.add_game()
+        self.add_game('1 2 3 4 5 7')
+        jogos = storage.listar_jogos()
+        self.find_button('Otimizar mesma quantidade').invoke()
+        self.wait_for_job(timeout=20)
+        self.assertEqual(storage.listar_jogos(), jogos)
+        self.assertEqual(len(self.app.suggestions), 2)
+        output = self.app.portfolio_output.get('1.0', 'end')
+        self.assertIn('ANTES:', output)
+        self.assertIn('ALTERNATIVA:', output)
+        self.assertGreater(self.app.optimized_portfolio['ganho_resultados'], 0)
+        self.errors.assert_not_called()
 
 
 if __name__ == "__main__":
